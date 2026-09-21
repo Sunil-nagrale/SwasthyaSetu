@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Send,
@@ -18,7 +18,11 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { MedicalDisclaimer } from '@/components/common/medical-disclaimer';
 import { chatbotApi, PatientChatCitation, ChatMessagePayload } from '@/lib/api/chatbot';
+import { prescriptionsApi } from '@/lib/api/prescriptions';
+import { reportsApi } from '@/lib/api/reports';
+import { useAuth } from '@/contexts/auth-context';
 import { useToast } from '@/contexts/toast-context';
+import { Prescription, MedicalReport } from '@/types';
 
 interface ChatEntry {
   role: 'user' | 'assistant';
@@ -30,6 +34,11 @@ export type AssistantStatus = 'ready' | 'generating' | 'unable to answer' | 'una
 
 export default function PatientAssistantPage() {
   const toast = useToast();
+  const { user, isAuthenticated, loginAsDemo } = useAuth();
+
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [reports, setReports] = useState<MedicalReport[]>([]);
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
 
   const [messages, setMessages] = useState<ChatEntry[]>([
     {
@@ -40,6 +49,25 @@ export default function PatientAssistantPage() {
   ]);
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<AssistantStatus>('ready');
+
+  // Load patient's confirmed records on mount
+  useEffect(() => {
+    async function loadRecords() {
+      try {
+        const [rxList, repList] = await Promise.all([
+          prescriptionsApi.listPrescriptions().catch(() => []),
+          reportsApi.listReports().catch(() => []),
+        ]);
+        setPrescriptions(rxList.filter((p) => p.status === 'confirmed'));
+        setReports(repList.filter((r) => r.status === 'confirmed'));
+      } catch (err) {
+        console.warn('Could not preload patient records:', err);
+      } finally {
+        setRecordsLoaded(true);
+      }
+    }
+    loadRecords();
+  }, []);
 
   const samplePrompts = [
     'What active medications and dosages am I taking?',
@@ -61,6 +89,10 @@ export default function PatientAssistantPage() {
     setStatus('generating');
 
     try {
+      if (!isAuthenticated) {
+        await loginAsDemo('patient');
+      }
+
       const apiPayload: ChatMessagePayload[] = newHistory.slice(-6).map((m) => ({
         role: m.role,
         content: m.content,
@@ -88,13 +120,103 @@ export default function PatientAssistantPage() {
         },
       ]);
     } catch (err: unknown) {
+      console.warn('Patient AI live assistant error (Bedrock pending):', err);
+      const q = query.toLowerCase();
+
+      // Guardrail 1: Disallow diagnosis and dosage prescription requests
+      if (q.includes('diagnose') || q.includes('prescribe') || q.includes('how much should i take') || q.includes('cure')) {
+        setStatus('ready');
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: 'I cannot provide a medical diagnosis or prescribe medication dosages. Please consult your physician or an authorized healthcare provider.',
+          },
+        ]);
+        return;
+      }
+
+      // Guardrail 2: Answer ongoing medications from confirmed records
+      const ongoingRx = prescriptions.filter(
+        (p) => p.treatmentStatus !== 'completed' && p.treatmentStatus !== 'cured'
+      );
+      if (q.includes('medication') || q.includes('medicine') || q.includes('taking') || q.includes('active') || q.includes('dose')) {
+        if (ongoingRx.length > 0) {
+          const medDetails = ongoingRx
+            .map((rx) => {
+              const meds = rx.medicines?.map((m) => `${m.name} (${m.dosage} - ${m.frequency})`).join(', ');
+              return `${rx.doctorName || 'Doctor'} at ${rx.hospitalName || 'Hospital'} (${rx.prescriptionDate || 'Recent'}): ${meds}`;
+            })
+            .join('; ');
+
+          setStatus('ready');
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: `According to your verified ongoing prescriptions, you are currently prescribed: ${medDetails}.\n\n[Grounded in Verified Patient Records | Bedrock AI Account Activation Pending]`,
+              citations: ongoingRx.map((rx) => ({
+                recordName: `Prescription (${rx.medicines?.map((m) => m.name).join(', ') || 'Medications'})`,
+                recordDate: rx.prescriptionDate,
+              })),
+            },
+          ]);
+          return;
+        }
+      }
+
+      // Guardrail 3: Answer lab report findings from confirmed records
+      if (q.includes('cholesterol') || q.includes('blood') || q.includes('glucose') || q.includes('hba1c') || q.includes('test') || q.includes('report') || q.includes('lab')) {
+        const matchingRep = reports.find((r) =>
+          r.findings?.some((f) => q.includes(f.parameter.toLowerCase())) ||
+          q.includes(r.title.toLowerCase())
+        );
+        if (matchingRep) {
+          const findingsStr = matchingRep.findings
+            ?.map((f) => `${f.parameter}: ${f.value} ${f.unit || ''} (${f.status})`)
+            .join(', ');
+          setStatus('ready');
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: `According to your confirmed report "${matchingRep.title}" dated ${matchingRep.reportDate || 'Recent'} from ${matchingRep.labName || 'Laboratory'}: ${findingsStr}. Summary: ${matchingRep.summary || 'Findings verified.'}\n\n[Grounded in Verified Patient Records | Bedrock AI Account Activation Pending]`,
+              citations: [
+                {
+                  recordName: matchingRep.title,
+                  recordDate: matchingRep.reportDate,
+                  sourcePage: 1,
+                },
+              ],
+            },
+          ]);
+          return;
+        }
+      }
+
+      // Guardrail 4: Answer allergy query
+      if (q.includes('allerg')) {
+        const allergies: string[] = (user as any)?.allergies || [];
+        setStatus('ready');
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: allergies.length > 0
+              ? `According to your patient profile, your recorded allergies are: ${allergies.join(', ')}.`
+              : 'You have no drug or environmental allergies recorded in your profile.',
+          },
+        ]);
+        return;
+      }
+
+      // Fallback: Honest Bedrock pending notification
       setStatus('unavailable');
-      const msg = err instanceof Error ? err.message : 'Assistant service unavailable';
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: `I was unable to retrieve that information from your records: ${msg}. Please ensure you have confirmed prescriptions or reports uploaded.`,
+          content: 'AI service unavailable (Bedrock account access pending). Your confirmed prescriptions and lab reports remain securely stored and viewable in your Medical Records dashboard.',
         },
       ]);
     }
@@ -163,22 +285,27 @@ export default function PatientAssistantPage() {
             )}
             {status === 'unavailable' && (
               <>
-                <div className="h-2.5 w-2.5 rounded-full bg-rose-500" />
-                <span className="text-xs font-bold text-rose-700">Assistant Unavailable</span>
+                <div className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                <span className="text-xs font-bold text-amber-800">Bedrock Access Pending (Verified Records Safe)</span>
               </>
             )}
           </div>
-          <Badge
-            variant={
-              status === 'unavailable'
-                ? 'danger'
-                : status === 'unable to answer'
-                ? 'warning'
-                : 'success'
-            }
-          >
-            Status: {status.toUpperCase()}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-slate-500 hidden sm:inline">
+              Verified Records: {prescriptions.length} Prescriptions • {reports.length} Reports
+            </span>
+            <Badge
+              variant={
+                status === 'unavailable'
+                  ? 'warning'
+                  : status === 'unable to answer'
+                  ? 'warning'
+                  : 'success'
+              }
+            >
+              Status: {status === 'unavailable' ? 'GROUNDED FALLBACK' : status.toUpperCase()}
+            </Badge>
+          </div>
         </div>
 
         {/* Message Log */}

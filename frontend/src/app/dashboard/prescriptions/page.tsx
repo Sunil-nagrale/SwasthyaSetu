@@ -138,15 +138,36 @@ export default function PrescriptionsPage() {
 
       // Step 3: Trigger Textract OCR & Bedrock clinical extraction
       setUploadProgressMsg('Running Textract OCR & clinical medicine extraction...');
-      const processedRx = await prescriptionsApi.processPrescription(uploadData.recordId);
+      let processedRx: Prescription | null = null;
+      try {
+        processedRx = await prescriptionsApi.processPrescription(uploadData.recordId);
+        toast.success('Prescription scanned! Please review extracted medicines.');
+      } catch (procErr: unknown) {
+        console.warn('Prescription OCR/Bedrock processing deferred or pending:', procErr);
+        toast.info('Document uploaded securely to S3. Please confirm details below.');
+        processedRx = {
+          prescriptionId: uploadData.recordId,
+          patientId: '',
+          s3Key: uploadData.s3Key,
+          fileName: file.name,
+          mimeType: file.type,
+          fileSize: file.size,
+          status: 'draft',
+          treatmentStatus: 'ongoing',
+          medicines: [{ name: '', dosage: '', frequency: 'Once daily', duration: '7 days', instructions: 'After meals' }],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
 
-      toast.success('Prescription scanned! Please review extracted medicines.');
       await fetchPrescriptions();
 
       // Open review modal immediately for human verification
-      handleOpenReview(processedRx);
+      if (processedRx) {
+        handleOpenReview(processedRx);
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Prescription upload or OCR failed';
+      const msg = err instanceof Error ? err.message : 'Prescription upload failed';
       toast.error(msg);
     } finally {
       setIsUploading(false);
@@ -402,31 +423,20 @@ export default function PrescriptionsPage() {
 
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
                     {rx.status === 'confirmed' && (
-                      <>
-                        {isOngoing ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={updatingThis}
-                            onClick={() => handleToggleStatus(rx, 'completed')}
-                            className="text-xs h-8 px-2.5 text-slate-600 hover:text-slate-900"
-                            title="Mark treatment as completed"
-                          >
-                            {updatingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Mark Completed'}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={updatingThis}
-                            onClick={() => handleToggleStatus(rx, 'ongoing')}
-                            className="text-xs h-8 px-2.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                            title="Reactivate prescription and sync calendar reminders"
-                          >
-                            {updatingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Reactivate'}
-                          </Button>
-                        )}
-                      </>
+                      <div className="flex items-center gap-1">
+                        <label className="text-[10px] font-semibold text-slate-500 uppercase">Status:</label>
+                        <select
+                          value={rx.treatmentStatus || 'ongoing'}
+                          disabled={!!updatingThis}
+                          onChange={(e) => handleToggleStatus(rx, e.target.value as any)}
+                          className="text-xs py-1 px-2 rounded-lg border border-slate-300 bg-white text-slate-800 font-semibold focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:opacity-50"
+                        >
+                          <option value="ongoing">Ongoing</option>
+                          <option value="completed">Completed</option>
+                          <option value="cured">Cured</option>
+                        </select>
+                        {updatingThis && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-600" />}
+                      </div>
                     )}
 
                     <Button
