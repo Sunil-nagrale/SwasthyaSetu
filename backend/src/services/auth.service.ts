@@ -38,6 +38,14 @@ export class AuthService {
   async login(input: LoginInput): Promise<CognitoTokens> {
     return this.cognito.login(input.email, input.password);
   }
+
+  async confirmSignUp(email: string, code: string): Promise<{ confirmed: boolean }> {
+    return this.cognito.confirmSignUp(email, code);
+  }
+
+  async resendConfirmationCode(email: string): Promise<{ sent: boolean }> {
+    return this.cognito.resendConfirmationCode(email);
+  }
 }
 
 export const authService = new AuthService();

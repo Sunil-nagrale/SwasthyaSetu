@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { AuthUser, UserRole } from '@/types';
-import { authApi, LoginResponse, SignUpPayload } from '@/lib/api/auth';
+import { authApi, LoginResponse, SignUpPayload, SignUpResponse } from '@/lib/api/auth';
 import { setApiAuthToken, getApiAuthToken } from '@/lib/api/client';
 
 interface AuthContextType {
@@ -13,7 +13,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signUp: (payload: SignUpPayload) => Promise<void>;
+  signUp: (payload: SignUpPayload) => Promise<SignUpResponse>;
   logout: () => void;
   loginAsDemo: (type: 'patient' | 'hospital_admin' | 'admin') => Promise<void>;
 }
@@ -52,12 +52,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return 'patient';
   };
 
+  const extractRoles = (data: LoginResponse): string[] => {
+    let roles = [...(data.roles || [])];
+    const tokenToInspect = data.idToken || data.accessToken;
+    if (tokenToInspect) {
+      try {
+        const parts = tokenToInspect.split('.');
+        if (parts.length >= 2) {
+          const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const decodedJson = JSON.parse(atob(payloadBase64));
+          const groups = decodedJson['cognito:groups'];
+          if (Array.isArray(groups)) {
+            roles = Array.from(new Set([...roles, ...groups]));
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to parse token payload for roles:', e);
+      }
+    }
+    return roles;
+  };
+
   const handleLoginSuccess = useCallback((data: LoginResponse) => {
-    const primaryRole = getPrimaryRole(data.roles);
+    const roles = extractRoles(data);
+    const primaryRole = getPrimaryRole(roles);
     const authUser: AuthUser = {
       userId: data.userId,
       email: data.email,
-      roles: data.roles as UserRole[],
+      roles: roles as UserRole[],
       // Hospital admin assignment
       hospitalId: primaryRole === 'hospital_admin' ? '11111111-1111-1111-1111-111111111111' : undefined,
     };
@@ -97,7 +119,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await authApi.login({ email, password });
       handleLoginSuccess(data);
 
-      const primary = getPrimaryRole(data.roles);
+      const roles = extractRoles(data);
+      const primary = getPrimaryRole(roles);
       if (primary === 'hospital_admin') {
         router.push('/hospital-admin');
       } else if (primary === 'admin') {
@@ -110,12 +133,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (payload: SignUpPayload) => {
+  const signUp = async (payload: SignUpPayload): Promise<SignUpResponse> => {
     setIsLoading(true);
     try {
-      await authApi.signUp(payload);
-      // Auto login after sign up
-      await login(payload.email, payload.password);
+      const res = await authApi.signUp(payload);
+      if (res.isConfirmed) {
+        await login(payload.email, payload.password);
+      }
+      return res;
     } finally {
       setIsLoading(false);
     }

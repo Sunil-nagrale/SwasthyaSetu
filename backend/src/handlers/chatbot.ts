@@ -8,7 +8,7 @@ import { ok } from '../utils/response.js';
 
 export const hospitalChatHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    const auth = requireRole(event, ['patient']);
+    const auth = requireRole(event, ['patient', 'hospital_admin', 'admin']);
     const body = parseJsonBody(event);
     const validated = HospitalChatSchema.parse(body);
 
@@ -19,7 +19,7 @@ export const hospitalChatHandler = withErrorHandler(
 
 export const patientChatHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    const auth = requireRole(event, ['patient']);
+    const auth = requireRole(event, ['patient', 'hospital_admin', 'admin']);
     const body = parseJsonBody(event);
     const validated = PatientChatSchema.parse(body);
 

@@ -1,8 +1,10 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from '../types/aws.js';
 import { withErrorHandler } from '../middleware/error.middleware.js';
-import { requireRole } from '../middleware/auth.middleware.js';
+import { requireRole, resolveHospitalAdminScope } from '../middleware/auth.middleware.js';
 import { parseJsonBody, getPathParam } from '../middleware/request.middleware.js';
 import { adminService } from '../services/admin.service.js';
+import { hospitalAdminMappingRepo } from '../repositories/container.js';
+import { ForbiddenError } from '../utils/errors.js';
 import {
   CreateHospitalSchema,
   UpdateHospitalSchema,
@@ -30,7 +32,7 @@ export const adminCreateHospitalHandler = withErrorHandler(
 
 export const adminListHospitalsHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const hospitals = await adminService.listHospitals();
     return ok(hospitals);
   }
@@ -38,7 +40,7 @@ export const adminListHospitalsHandler = withErrorHandler(
 
 export const adminGetHospitalHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const hospitalId = getPathParam(event, 'hospitalId');
     const hospital = await adminService.getHospital(hospitalId);
     return ok(hospital);
@@ -47,8 +49,14 @@ export const adminGetHospitalHandler = withErrorHandler(
 
 export const adminUpdateHospitalHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    const auth = requireRole(event, ['admin', 'hospital_admin']);
     const hospitalId = getPathParam(event, 'hospitalId');
+    if (!auth.roles.includes('admin')) {
+      const allowedHospitalId = await resolveHospitalAdminScope(auth, hospitalAdminMappingRepo);
+      if (hospitalId !== allowedHospitalId) {
+        throw new ForbiddenError('Hospital admin cannot modify another hospital profile', 'ERR_SCOPE_VIOLATION');
+      }
+    }
     const body = parseJsonBody(event);
     const validated = UpdateHospitalSchema.parse(body);
     const hospital = await adminService.updateHospital(hospitalId, validated);
@@ -68,9 +76,15 @@ export const adminDeleteHospitalHandler = withErrorHandler(
 // --- DEPARTMENTS ---
 export const adminCreateDepartmentHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    const auth = requireRole(event, ['admin', 'hospital_admin']);
     const body = parseJsonBody(event);
     const validated = CreateDepartmentSchema.parse(body);
+    if (!auth.roles.includes('admin')) {
+      const allowedHospitalId = await resolveHospitalAdminScope(auth, hospitalAdminMappingRepo);
+      if (validated.hospitalId !== allowedHospitalId) {
+        throw new ForbiddenError('Hospital admin cannot create departments for another hospital', 'ERR_SCOPE_VIOLATION');
+      }
+    }
     const dept = await adminService.createDepartment(validated);
     return created(dept);
   }
@@ -78,7 +92,7 @@ export const adminCreateDepartmentHandler = withErrorHandler(
 
 export const adminListDepartmentsHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const hospitalId = event.queryStringParameters?.hospitalId || '';
     const depts = await adminService.listDepartments(hospitalId);
     return ok(depts);
@@ -87,7 +101,7 @@ export const adminListDepartmentsHandler = withErrorHandler(
 
 export const adminUpdateDepartmentHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const departmentId = getPathParam(event, 'departmentId');
     const body = parseJsonBody(event);
     const validated = UpdateDepartmentSchema.parse(body);
@@ -98,7 +112,7 @@ export const adminUpdateDepartmentHandler = withErrorHandler(
 
 export const adminDeleteDepartmentHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const departmentId = getPathParam(event, 'departmentId');
     await adminService.deleteDepartment(departmentId);
     return noContent();
@@ -108,9 +122,15 @@ export const adminDeleteDepartmentHandler = withErrorHandler(
 // --- DOCTORS ---
 export const adminCreateDoctorHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    const auth = requireRole(event, ['admin', 'hospital_admin']);
     const body = parseJsonBody(event);
     const validated = CreateDoctorSchema.parse(body);
+    if (!auth.roles.includes('admin')) {
+      const allowedHospitalId = await resolveHospitalAdminScope(auth, hospitalAdminMappingRepo);
+      if (validated.hospitalId !== allowedHospitalId) {
+        throw new ForbiddenError('Hospital admin cannot register doctors for another hospital', 'ERR_SCOPE_VIOLATION');
+      }
+    }
     const doctor = await adminService.createDoctor(validated);
     return created(doctor);
   }
@@ -118,7 +138,7 @@ export const adminCreateDoctorHandler = withErrorHandler(
 
 export const adminListDoctorsHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const hospitalId = event.queryStringParameters?.hospitalId || '';
     const deptId = event.queryStringParameters?.departmentId;
     const doctors = await adminService.listDoctors(hospitalId, deptId);
@@ -128,7 +148,7 @@ export const adminListDoctorsHandler = withErrorHandler(
 
 export const adminUpdateDoctorHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const doctorId = getPathParam(event, 'doctorId');
     const body = parseJsonBody(event);
     const validated = UpdateDoctorSchema.parse(body);
@@ -139,7 +159,7 @@ export const adminUpdateDoctorHandler = withErrorHandler(
 
 export const adminDeleteDoctorHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const doctorId = getPathParam(event, 'doctorId');
     await adminService.deleteDoctor(doctorId);
     return noContent();
@@ -149,7 +169,7 @@ export const adminDeleteDoctorHandler = withErrorHandler(
 // --- SCHEDULES ---
 export const adminCreateScheduleHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const body = parseJsonBody(event);
     const validated = CreateScheduleSchema.parse(body);
     const schedule = await adminService.createSchedule(validated);
@@ -159,7 +179,7 @@ export const adminCreateScheduleHandler = withErrorHandler(
 
 export const adminUpdateScheduleHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const scheduleId = getPathParam(event, 'scheduleId');
     const body = parseJsonBody(event);
     const validated = UpdateScheduleSchema.parse(body);
@@ -170,7 +190,7 @@ export const adminUpdateScheduleHandler = withErrorHandler(
 
 export const adminDeleteScheduleHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const scheduleId = getPathParam(event, 'scheduleId');
     await adminService.deleteSchedule(scheduleId);
     return noContent();
@@ -180,9 +200,15 @@ export const adminDeleteScheduleHandler = withErrorHandler(
 // --- LAB TESTS ---
 export const adminCreateLabTestHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    const auth = requireRole(event, ['admin', 'hospital_admin']);
     const body = parseJsonBody(event);
     const validated = CreateLabTestSchema.parse(body);
+    if (!auth.roles.includes('admin')) {
+      const allowedHospitalId = await resolveHospitalAdminScope(auth, hospitalAdminMappingRepo);
+      if (validated.hospitalId !== allowedHospitalId) {
+        throw new ForbiddenError('Hospital admin cannot create lab tests for another hospital', 'ERR_SCOPE_VIOLATION');
+      }
+    }
     const lab = await adminService.createLabTest(validated);
     return created(lab);
   }
@@ -190,7 +216,7 @@ export const adminCreateLabTestHandler = withErrorHandler(
 
 export const adminUpdateLabTestHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const labId = getPathParam(event, 'labId');
     const body = parseJsonBody(event);
     const validated = UpdateLabTestSchema.parse(body);
@@ -201,7 +227,7 @@ export const adminUpdateLabTestHandler = withErrorHandler(
 
 export const adminDeleteLabTestHandler = withErrorHandler(
   async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    requireRole(event, ['admin']);
+    requireRole(event, ['admin', 'hospital_admin']);
     const labId = getPathParam(event, 'labId');
     await adminService.deleteLabTest(labId);
     return noContent();

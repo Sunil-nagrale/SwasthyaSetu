@@ -1,6 +1,7 @@
 import { ApiError } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const rawBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://te0bqg0js8.execute-api.eu-north-1.amazonaws.com/dev';
+const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '');
 
 let authToken: string | null = null;
 
@@ -47,8 +48,11 @@ export async function apiClient<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) {
+  if (token && headers['Authorization'] === undefined) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+  if (headers['Authorization'] === '') {
+    delete headers['Authorization'];
   }
 
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;

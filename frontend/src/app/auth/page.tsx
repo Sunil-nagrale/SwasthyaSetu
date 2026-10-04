@@ -58,14 +58,19 @@ export default function AuthPage() {
 
     setIsSubmitting(true);
     try {
-      await signUp({
+      const res = await signUp({
         email,
         password,
         name,
         phone: phone || undefined,
         dateOfBirth: dateOfBirth || undefined,
       });
-      toast.success('Account created and logged in successfully!');
+      if (res && !res.isConfirmed) {
+        toast.success('Patient account created! Please check your email for the verification code/link, then sign in.');
+        setMode('login');
+      } else {
+        toast.success('Account created and logged in successfully!');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed';
       setFormError(msg);

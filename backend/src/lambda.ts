@@ -23,7 +23,12 @@ import {
   getDiagnosisQuestionsHandler,
   getDiagnosisResultHandler,
 } from './handlers/diagnosis.js';
-import { signUpHandler, loginHandler } from './handlers/auth.js';
+import {
+  signUpHandler,
+  loginHandler,
+  confirmSignUpHandler,
+  resendCodeHandler,
+} from './handlers/auth.js';
 import { getProfileHandler, updateProfileHandler } from './handlers/profile.js';
 import {
   createAppointmentHandler,
@@ -98,6 +103,8 @@ const compiledRoutes = compileRoutes([
   { method: 'POST', pattern: '/diagnosis/result', handler: getDiagnosisResultHandler },
 
   { method: 'POST', pattern: '/auth/signup', handler: signUpHandler },
+  { method: 'POST', pattern: '/auth/confirm', handler: confirmSignUpHandler },
+  { method: 'POST', pattern: '/auth/resend-code', handler: resendCodeHandler },
   { method: 'POST', pattern: '/auth/login', handler: loginHandler },
   { method: 'GET', pattern: '/profile', handler: getProfileHandler },
   { method: 'PUT', pattern: '/profile', handler: updateProfileHandler },

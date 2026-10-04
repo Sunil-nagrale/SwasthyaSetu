@@ -44,10 +44,10 @@ export class DynamoAppointmentRepository implements IAppointmentRepository {
     page: number,
     pageSize: number
   ): Promise<PaginatedResult<Appointment>> {
-    const items = (await queryByPk(patientPk(patientId), 'appointment#')).map((i) =>
-      stripKeys<Appointment>(i)
-    );
-    items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const items = (await queryByPk(patientPk(patientId), 'appointment#'))
+      .filter((i) => i.appointmentId && i.patientId)
+      .map((i) => stripKeys<Appointment>(i));
+    items.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     return paginateItems(items, page, pageSize);
   }
 
@@ -56,10 +56,11 @@ export class DynamoAppointmentRepository implements IAppointmentRepository {
     page: number,
     pageSize: number
   ): Promise<PaginatedResult<Appointment>> {
-    const items = (await queryGsi('GSI1', 'GSI1PK', hospitalPk(hospitalId))).map((i) =>
-      stripKeys<Appointment>(i)
-    );
-    items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const rawItems = await queryGsi('GSI1', 'GSI1PK', hospitalPk(hospitalId));
+    const items = rawItems
+      .filter((i) => i.entityType === 'appointment' || (i.appointmentId && i.patientId))
+      .map((i) => stripKeys<Appointment>(i));
+    items.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     return paginateItems(items, page, pageSize);
   }
 
